@@ -1,143 +1,54 @@
 import socket
 import threading
-import time
+class SIMPDaemon:
+    # Constructor
+    def __init__(self, ip: str,client_port:int, daemon_port: int): #
+        self.ip = ip
+        self.client_port = client_port
+        self.daemon_port = daemon_port
 
+        # Create two UDP sockets, for client and daemon
+        self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.daemon_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        # Bind each socket to its respective port
+        self.client_socket.bind((self.ip, self.client_port))
+        self.daemon_socket.bind((self.ip, self.daemon_port))
 
-class Daemon:
-    def __init__(self, ip_address: str):
-        self.ip_address = ip_address
-        self.daemon_port = 7777
-        self.client_port = 7778
-        self.buffer_size = 1024
+        print(f"Daemon listening on {self.ip}:{self.client_port} (client) and {self.ip}:{self.daemon_port} (daemon)...")
+
     def start(self):
-        threading.Thread(target=self.listen_to_others, daemon=True).start()
+        # Create threads for listening on each port
         threading.Thread(target=self.listen_to_client, daemon=True).start()
+        threading.Thread(target=self.listen_to_daemons, daemon=True).start()
 
+
+        # Keep the main thread alive
+        print("Daemon started, waiting for connections...")
         while True:
-            time.sleep(1)
-
-    def listen_to_others(self):
-        daemon_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        daemon_socket.bind((self.ip_address, self.daemon_port))
-        print(f"Listening for chats on {self.ip_address}:{self.daemon_port}")
-
-        while True:
-            try:
-                data, addr = daemon_socket.recvfrom(self.buffer_size)
-                print(f"Received data from {addr}: {data}")
-                self.handle_daemon_message(data, addr, daemon_socket)
-            except Exception as e:
-                print(f"Error handling daemon message: {e}")
-
-    def handle_daemon_message(self, data: bytes, addr: tuple, socket: socket.socket):
-        # Parse the datagram
-        datagram = self.parse_datagram(data)
-        datagram_type = datagram["type"]
-        operation = datagram["operation"]
-
-        if datagram_type == 0x01:  # Control datagram
-            if operation == 0x02:  # SYN
-                self.handle_handshake(addr, datagram, socket)
-            elif operation == 0x08:  # FIN
-                self.handle_disconnect(addr, datagram)
-        elif datagram_type == 0x02:  # Chat datagram
-            self.forward_message_to_client(datagram["payload"])
+            pass
 
     def listen_to_client(self):
-        client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        while client_socket:
-            client_socket.bind((self.ip_address, self.client_port))
-            print(f"Listening for client on {self.ip_address}:{self.client_port}")
+        while True:
+            data,client_address = self.client_socket.recvfrom(1024)
+            # Step 1: Receive SYN
+            if data.decode() == "SYN":
+                print(f"Received SYN from {client_address}")
+                self.client_socket.sendto("SYN-ACK".encode(), client_address)
 
-            while True:
-                try:
-                    data, addr = client_socket.recvfrom(self.buffer_size)
-                    print(f"Received client data: {data}")
-                    self.handle_client_message(data, addr, client_socket)
-                except Exception as e:
-                    print(f"Error handling client message: {e}")
-
-    def initiate_chat_with_daemon(self, command: str, addr: tuple, socket: socket.socket):
-        """
-        Initiates a chat with another daemon based on the 'connect' command from the client.
-        """
-        # Extract the IP address from the command
-        _, target_ip = command.split()
-
-        print(f"Initiating chat with daemon at {target_ip}...")
-
-        # Create a SYN datagram to initiate a handshake
-        syn_datagram = self.create_datagram(
-            datagram_type=0x01,  # Control datagram
-            operation=0x02,      # SYN
-            sequence=0,
-            user="daemon",       # Replace with a meaningful username if needed
-            payload=""
-        )
-
-        # Send the SYN datagram to the target daemon
-        target_address = (target_ip, self.daemon_port)
-        socket.sendto(syn_datagram, target_address)
-        print(f"SYN sent to {target_ip}:{self.daemon_port}")
-
-    def handle_client_message(self, data: bytes, addr: tuple, socket: socket.socket):
-        """Handles messages from the local client."""
-        command = data.decode().strip()
-        if command.startswith("connect"):
-            self.initiate_chat_with_daemon(command, addr, socket)
-        elif command.startswith("send"):
-            self.send_chat_message(command, socket)
-        elif command == "quit":
-            self.cleanup_client(addr, socket)
-
-    def parse_datagram(self, datagram: bytes) -> dict:
-        """Parses the incoming datagram based on SIMP protocol."""
-        return {
-            "type": datagram[0],
-            "operation": datagram[1],
-            "sequence": datagram[2],
-            "user": datagram[3:35].decode("ascii").strip(),
-            "payload_length": int.from_bytes(datagram[35:39], byteorder="big"),
-            "payload": datagram[39:].decode("ascii")
-        }
-
-    def create_datagram(self, datagram_type: int, operation: int, sequence: int, user: str, payload: str) -> bytes:
-        """Constructs a SIMP datagram."""
-        header = (
-                datagram_type.to_bytes(1, "big") +
-                operation.to_bytes(1, "big") +
-                sequence.to_bytes(1, "big") +
-                user.ljust(32).encode("ascii") +
-                len(payload).to_bytes(4, "big")
-        )
-        return header + payload.encode("ascii")
-
-    def handle_handshake(self, addr: tuple, datagram: dict, socket: socket.socket):
-        """Handles the three-way handshake process."""
-        print(f"Handshake initiated by {addr}.")
-        response = self.create_datagram(0x01, 0x06, 0, "daemon", "")  # SYN+ACK
-        socket.sendto(response, addr)
-
-         # Wait for ACK from client to complete the handshake
-        try:
-            data, _ = socket.recvfrom(self.buffer_size)
-            print(f"Received data from client: {data}")
-            if data[1] == 0x04:  # ACK operation
-                print("Handshake complete. Proceeding with chat.")
-                # Proceed to chat functionality after handshake
-            else:
-                print("Unexpected response during handshake.")
-        except Exception as e:
-            print(f"Error while waiting for ACK: {e}")
+                # Step 3: Receive ACK
+                data,_ = self.client_socket.recvfrom(1024)
+                if data.decode() == "ACK":
+                    print(f"Received ACK from {client_address}, handshake complete.")
+                    print("Connection established")
+                    break
+    def listen_to_daemons(self):
+        while True:
+            data,daemon_address = self.daemon_socket.recvfrom(1024)
+            print(f"Received message from daemon at{daemon_address}: {data.decode()}")
 
 
-    def forward_message_to_client(self, message: str):
-        """Forwards a chat message to the local client."""
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client_socket:
-            client_socket.sendto(message.encode("ascii"), ("127.0.0.1", self.client_port))
+
 
 if __name__ == "__main__":
-    daemon_ip = "localhost"  # Replace with the IP address of your machine
-    daemon = Daemon(daemon_ip)
+    daemon = SIMPDaemon("127.0.0.1", client_port=7778, daemon_port=7777)
     daemon.start()
-

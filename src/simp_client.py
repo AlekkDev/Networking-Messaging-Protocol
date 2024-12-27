@@ -48,6 +48,21 @@ class Client:
         """Sends a command to the daemon."""
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client_socket:
             client_socket.sendto(message.encode("ascii"), (self.daemon_ip, self.daemon_port))
+
+            if message == "ACK":
+            # Send an ACK datagram
+                ack_datagram = self.create_datagram(
+                    datagram_type=0x01,  # Control datagram
+                    operation=0x04,      # ACK operation
+                    sequence=0,          # Sequence (can be 0 for now)
+                    user=self.username,  # Your username
+                    payload=""           # No payload for ACK
+                )
+                client_socket.sendto(ack_datagram, (self.daemon_ip, self.daemon_port))
+                print("Sent ACK to daemon")
+            else:
+                # Handle other messages like "connect", "quit", etc.
+                client_socket.sendto(message.encode("ascii"), (self.daemon_ip, self.daemon_port))
     def receive_updates(self):
         """Receives updates from the daemon (incoming messages, chat requests)."""
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client_socket:
@@ -55,10 +70,17 @@ class Client:
             while self.running:
                 try:
                     data, _ = client_socket.recvfrom(1024)
-                    message = data.decode("ascii")
-                    self.handle_daemon_message(message)
+                    print(f"Received data: {data}")
+
+                    if data[1] == 0x06:  # This corresponds to the SYN-ACK operation
+                        print("Received SYN-ACK, sending ACK back to complete the handshake...")
+                        self.send_to_daemon("ACK")
+
+                    # Process other types of messages from the daemon (e.g., chat requests, messages)
+                    self.handle_daemon_message(data.decode("ascii"))
                 except Exception as e:
                     print(f"Error receiving data: {e}")
+                    
     def handle_daemon_message(self, message: str):
         """Handles incoming messages or requests from the daemon."""
         if message.startswith("chat_request"):

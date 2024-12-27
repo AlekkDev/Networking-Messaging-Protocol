@@ -57,6 +57,29 @@ class Daemon:
                 except Exception as e:
                     print(f"Error handling client message: {e}")
 
+    def initiate_chat_with_daemon(self, command: str, addr: tuple, socket: socket.socket):
+        """
+        Initiates a chat with another daemon based on the 'connect' command from the client.
+        """
+        # Extract the IP address from the command
+        _, target_ip = command.split()
+
+        print(f"Initiating chat with daemon at {target_ip}...")
+
+        # Create a SYN datagram to initiate a handshake
+        syn_datagram = self.create_datagram(
+            datagram_type=0x01,  # Control datagram
+            operation=0x02,      # SYN
+            sequence=0,
+            user="daemon",       # Replace with a meaningful username if needed
+            payload=""
+        )
+
+        # Send the SYN datagram to the target daemon
+        target_address = (target_ip, self.daemon_port)
+        socket.sendto(syn_datagram, target_address)
+        print(f"SYN sent to {target_ip}:{self.daemon_port}")
+
     def handle_client_message(self, data: bytes, addr: tuple, socket: socket.socket):
         """Handles messages from the local client."""
         command = data.decode().strip()
@@ -94,6 +117,18 @@ class Daemon:
         print(f"Handshake initiated by {addr}.")
         response = self.create_datagram(0x01, 0x06, 0, "daemon", "")  # SYN+ACK
         socket.sendto(response, addr)
+
+         # Wait for ACK from client to complete the handshake
+        try:
+            data, _ = socket.recvfrom(self.buffer_size)
+            print(f"Received data from client: {data}")
+            if data[1] == 0x04:  # ACK operation
+                print("Handshake complete. Proceeding with chat.")
+                # Proceed to chat functionality after handshake
+            else:
+                print("Unexpected response during handshake.")
+        except Exception as e:
+            print(f"Error while waiting for ACK: {e}")
 
 
     def forward_message_to_client(self, message: str):

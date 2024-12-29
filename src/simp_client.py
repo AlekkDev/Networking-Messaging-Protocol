@@ -5,6 +5,7 @@ class SIMPClient:
         self.daemon_ip = daemon_ip
         self.daemon_port = daemon_port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.connected = False
         print(f"Client created, ready to connect to daemon at {self.daemon_ip}:{self.daemon_port}")
     def connect(self):
         """Initiate the 3-way handshake"""
@@ -23,7 +24,44 @@ class SIMPClient:
             ack_datagram = create_datagram(0x01, 0x04, 0, "client1")
             self.socket.sendto("ACK".encode(), (self.daemon_ip, self.daemon_port))
             print("Sent ACK to daemon, handshake complete.")
+            self.connected = True
+            self.show_menu()  # Show menu after connection
+    def show_menu(self):
+        """Display a menu for user actions."""
+        while self.connected:
+            print("\n=== SIMP Client Menu ===")
+            print("1. Send a message")
+            print("2. Terminate session")
+            print("3. Quit")
 
+            choice = input("Enter your choice: ").strip()
+            if choice == "1":
+                self.send_message()
+            elif choice == "2":
+                self.terminate_session()
+            elif choice == "3":
+                print("Exiting...")
+                break
+            else:
+                print("Invalid choice. Please try again.")
+
+    def send_message(self):
+        """Prompt user to enter a message and send it to the daemon."""
+        message = input("Enter your message: ").strip()
+        if not message:
+            print("Message cannot be empty.")
+            return
+        chat_datagram = create_datagram(0x02, 0x01, 0, "client1", message)  # Chat message
+        self.socket.sendto(chat_datagram, (self.daemon_ip, self.daemon_port))
+        print("Message sent.")
+
+    def terminate_session(self):
+        """Send a termination request to the daemon."""
+        print("Terminating session...")
+        fin_datagram = create_datagram(0x01, 0x08, 0, "client1")  # FIN
+        self.socket.sendto(fin_datagram, (self.daemon_ip, self.daemon_port))
+        print("Session terminated.")
+        self.connected = False
 
 # Datagram functions
 def create_datagram(datagram_type: int, operation: int, sequence: int, user: str, payload: str = "") -> bytes:

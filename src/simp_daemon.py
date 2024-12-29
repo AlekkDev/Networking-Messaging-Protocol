@@ -14,6 +14,9 @@ class SIMPDaemon:
         self.client_socket.bind((self.ip, self.client_port))
         self.daemon_socket.bind((self.ip, self.daemon_port))
 
+        # Track active sessions
+        self.active_sessions = {}
+
         print(f"Daemon listening on {self.ip}:{self.client_port} (client) and {self.ip}:{self.daemon_port} (daemon)...")
 
     def start(self):
@@ -29,26 +32,52 @@ class SIMPDaemon:
 
     def listen_to_client(self):
         while True:
-            data,client_address = self.client_socket.recvfrom(1024)
-            # Step 1: Receive SYN
-            syn_datagram = parse_datagram(data)
-            if syn_datagram["type"] == 0x01 and syn_datagram["operation"] == 0x02:
-                print(f"Received SYN from {client_address}")
-                # Step 2: Send SYN-ACK
-                syn_ack_datagram = create_datagram(0x01, 0x06, 0, "daemon")
-                self.client_socket.sendto(syn_ack_datagram, client_address)
+            data, client_address = self.client_socket.recvfrom(1024)
+            parsed_datagram = parse_datagram(data)
 
-                # Step 3: Receive ACK
-                data,_ = self.client_socket.recvfrom(1024)
-                parsed_datagram = parse_datagram(data)
-                if parse_datagram(data)["type"] == 0x01 and parse_datagram(data)["operation"] == 0x04:
-                    print(f"Received ACK from {client_address}, handshake complete.")
-                    print("Connection established")
-                    break
+            # Handle datagram based on type and operation
+            if parsed_datagram["type"] == 0x01:  # Control datagrams
+                if parsed_datagram["operation"] == 0x02:  # SYN
+                    self.handle_syn(client_address)
+                elif parsed_datagram["operation"] == 0x08:  # FIN
+                    self.handle_fin(client_address)
+
+            elif parsed_datagram["type"] == 0x02 and parsed_datagram["operation"] == 0x01:  # Chat message
+                self.handle_chat_message(parsed_datagram, client_address)
+    def handle_syn(self, client_address): # 3-way handshake
+        print(f"Received SYN from {client_address}")
+
+        # STEP 2: Send SYN-ACK
+        syn_ack_datagram = create_datagram(0x01, 0x06, 0, "daemon")
+        self.client_socket.sendto(syn_ack_datagram, client_address)
+
+        # STEP 3: Receive ACK
+        data, _ = self.client_socket.recvfrom(1024)
+        parsed_datagram = parse_datagram(data)
+        if parsed_datagram["type"] == 0x01 and parsed_datagram["operation"] == 0x04:
+            print(f"Received ACK from {client_address}, handshake complete.")
+            print("Connection established")
+            self.active_sessions[client_address] = True
+
+    def handle_fin(self, client_address):
+        print(f"Received FIN from {client_address}")
+        # Acknowledge the termination
+        fin_ack_datagram = create_datagram(0x01, 0x04, 0, "daemon")
+        self.client_socket.sendto(fin_ack_datagram, client_address)
+        # Close the session
+        print(f"Session with {client_address} terminated.")
+        if client_address in self.active_sessions:
+            del self.active_sessions[client_address]
+    def handle_chat_message(self, parsed_datagram, client_address):
+        print(f"Received message from {client_address}: {parsed_datagram['payload']}")
+
+
+
     def listen_to_daemons(self):
         while True:
             data,daemon_address = self.daemon_socket.recvfrom(1024)
-            print(f"Received message from daemon at{daemon_address}: {data.decode()}")
+            parsed_datagram = parse_datagram(data)
+            print(f"Received message from daemon at{daemon_address}: {parsed_datagram}")
 
 
 # Datagram functions

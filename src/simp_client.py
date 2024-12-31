@@ -1,4 +1,5 @@
 import socket
+import argparse
 
 class SIMPClient:
     def __init__(self, daemon_ip: str, daemon_port: int):
@@ -117,5 +118,9 @@ def parse_datagram(data: bytes) -> dict:
 
 
 if __name__ == "__main__":
-    client = SIMPClient("127.0.0.1", 7778)
+    parser = argparse.ArgumentParser(description="SIMP CLient")
+    parser.add_argument("ip", type=str, help="IP address to bind to")
+    args = parser.parse_args()
+
+    client = SIMPClient(args.ip, 7778)
     client.connect()

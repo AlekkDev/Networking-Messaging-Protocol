@@ -1,8 +1,9 @@
 import socket
 import threading
+import argparse
 class SIMPDaemon:
     # Constructor
-    def __init__(self, ip: str,client_port:int, daemon_port: int): #
+    def __init__(self,client_port:int, daemon_port: int, ip: str):
         self.ip = ip
         self.client_port = client_port
         self.daemon_port = daemon_port
@@ -116,5 +117,9 @@ def parse_datagram(data: bytes) -> dict:
     }
 
 if __name__ == "__main__":
-    daemon = SIMPDaemon("127.0.0.1", client_port=7778, daemon_port=7777)
+    parser = argparse.ArgumentParser(description="SIMP Daemon")
+    parser.add_argument("ip", type=str, help="IP address to bind to")
+    args = parser.parse_args()
+
+    daemon = SIMPDaemon(client_port=7778, daemon_port=7777, ip=args.ip)
     daemon.start()

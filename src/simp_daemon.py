@@ -17,6 +17,7 @@ class SIMPDaemon:
 
         # Track active sessions
         self.active_sessions = {}
+        self.sequence_number = 0 # Expected seq.number for stop-and-wait retransmission
 
         print(f"Daemon listening on {self.ip}:{self.client_port} (client) and {self.ip}:{self.daemon_port} (daemon)...")
 
@@ -70,8 +71,19 @@ class SIMPDaemon:
         if client_address in self.active_sessions:
             del self.active_sessions[client_address]
     def handle_chat_message(self, parsed_datagram, client_address):
-        print(f"Received message from {client_address}: {parsed_datagram['payload']}")
+        """Handle chat messages and send acknowledgments."""
+        if parsed_datagram["sequence"] == self.sequence_number:
+            print(f"Received message from {client_address}: {parsed_datagram['payload']}")
 
+            # Send acknowledgment
+            ack_datagram = create_datagram(0x01, 0x04, parsed_datagram["sequence"], "daemon")
+            self.client_socket.sendto(ack_datagram, client_address)
+            print("Acknowledgment sent.")
+
+            # Toggle expected sequence number
+            self.sequence_number ^= 1
+        else:
+            print(f"Duplicate message received from {client_address}. Ignoring...")
 
 
     def listen_to_daemons(self):

@@ -7,6 +7,7 @@ class SIMPClient:
         self.daemon_port = daemon_port
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.connected = False
+        self.sequence_number = 0
         print(f"Client created, ready to connect to daemon at {self.daemon_ip}:{self.daemon_port}")
     def connect(self):
         """Initiate the 3-way handshake"""
@@ -54,7 +55,28 @@ class SIMPClient:
             return
         chat_datagram = create_datagram(0x02, 0x01, 0, "client1", message)  # Chat message
         self.socket.sendto(chat_datagram, (self.daemon_ip, self.daemon_port))
-        print("Message sent.")
+        print("Message sent, waiting for acknowledgment...")
+
+    # Stop-and-wait retransmission Implementation
+
+        # Set socket timeout for retransmission
+        self.socket.settimeout(5.0)
+        try:
+            while True:
+                data, _ = self.socket.recvfrom(1024)
+                parsed = parse_datagram(data)
+
+                # Check for valid acknowledgment
+                if parsed["type"] == 0x01 and parsed["operation"] == 0x04:  # ACK
+                    if parsed["sequence"] == self.sequence_number:
+                        print("Acknowledgment received.")
+                        self.sequence_number ^= 1  # Toggle sequence number
+                        break
+                    else:
+                        print("Invalid sequence number in ACK. Ignoring...")
+        except socket.timeout:
+            print("No acknowledgment received. Retransmitting...")
+            self.socket.sendto(chat_datagram, (self.daemon_ip, self.daemon_port))
 
     def terminate_session(self):
         """Send a termination request to the daemon."""

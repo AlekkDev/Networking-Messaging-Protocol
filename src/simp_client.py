@@ -32,20 +32,60 @@ class SIMPClient:
         """Display a menu for user actions."""
         while self.connected:
             print("\n=== SIMP Client Menu ===")
-            print("1. Send a message")
-            print("2. Terminate session")
+            print("1. Connect with other Clients")
+            print("2. Wait for incoming connections")
             print("3. Quit")
 
             choice = input("Enter your choice: ").strip()
+            #send message comes only after daemon-to-daemon has been established first need logic for that
             if choice == "1":
-                self.send_message()
+                self.start_chat()
             elif choice == "2":
-                self.terminate_session()
+                self.wait_for_connection()
             elif choice == "3":
                 print("Exiting...")
                 break
             else:
                 print("Invalid choice. Please try again.")
+
+    def start_chat(self):
+        get_client_ip = input("Enter ip from client: ").strip()
+        
+        chat_datagram = create_datagram(0x01, 0x01, 0, "client1", get_client_ip)
+        self.socket.sendto(chat_datagram, (self.daemon_ip, self.daemon_port))
+        print("Sent chat initiation request to daemon1, target client ip is:", get_client_ip)
+
+        data, _ = self.socket.recvfrom(1024)  # Wait for response
+        parsed_datagram = self.parse_datagram(data)
+        if parsed_datagram["operation"] == 0x02:
+            print(f"Chat request accepted by client at {get_client_ip}.")
+            # Now, proceed with chat after request is accepted
+        else:
+            print("Chat request declined or timeout.")
+
+    def wait_for_connection(self):
+        print("Waiting for incoming connections...")
+
+        # Listen for a chat initiation request
+        data, _ = self.socket.recvfrom(1024)
+        parsed_datagram = self.parse_datagram(data)
+
+        if parsed_datagram["operation"] == 0x01:
+            print(f"Received chat request from client at {parsed_datagram['payload']}.")
+            accept_request = input(f"Do you want to accept the chat request from {parsed_datagram['payload']}? (yes/no): ").strip().lower()
+
+            if accept_request == "yes":
+                print("Chat request accepted.")
+                # Send acceptance back to daemon (to forward to Daemon 1)
+                accept_datagram = create_datagram(0x01, 0x02, 0, "client2")
+                self.socket.sendto(accept_datagram, (self.daemon_ip, self.daemon_port))
+
+                # Now proceed with chat after request is accepted
+                self.chat_with_client(parsed_datagram["payload"])
+            else:
+                print("Chat request declined.")
+                decline_datagram = self.create_datagram(0x01, 0x03, 0, "client2")
+                self.socket.sendto(decline_datagram, (self.daemon_ip, self.daemon_port))
 
     def send_message(self):
         """Prompt user to enter a message and send it to the daemon."""

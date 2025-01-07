@@ -7,6 +7,8 @@ class SIMPDaemon:
         self.ip = ip
         self.client_port = client_port
         self.daemon_port = daemon_port
+        self.connected_clients = {}
+        
 
         # Create two UDP sockets, for client and daemon
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -44,8 +46,12 @@ class SIMPDaemon:
                 elif parsed_datagram["operation"] == 0x08:  # FIN
                     self.handle_fin(client_address)
 
+                elif parsed_datagram["operation"] == 0x01:  # Chat initiation request
+                    self.handle_chat_request(parsed_datagram, client_address)
+
             elif parsed_datagram["type"] == 0x02 and parsed_datagram["operation"] == 0x01:  # Chat message
                 self.handle_chat_message(parsed_datagram, client_address)
+
     def handle_syn(self, client_address): # 3-way handshake
         print(f"Received SYN from {client_address}")
 
@@ -61,6 +67,12 @@ class SIMPDaemon:
             print("Connection established")
             self.active_sessions[client_address] = True
 
+            #add all the clients that connect to daemon to a list where you can see all available clients that are ready to chat
+            username = parse_datagram["user"]
+            self.connected_clients[client_address] = {"username" : username}
+            print(self.connected_clients)
+        
+
     def handle_fin(self, client_address):
         print(f"Received FIN from {client_address}")
         # Acknowledge the termination
@@ -70,6 +82,18 @@ class SIMPDaemon:
         print(f"Session with {client_address} terminated.")
         if client_address in self.active_sessions:
             del self.active_sessions[client_address]
+
+
+    def handle_chat_request(self, parsed_datagram, client_address):
+        target_client_ip = parsed_datagram["payload"]
+        print(f"Received chat request from client 1 {client_address} to client 2 {target_client_ip}")
+
+        daemon2_ip = "127.0.0.2"
+        daemon2_port = "7777"
+
+        self.client_socket.sendto(parsed_datagram, (daemon2_ip, daemon2_port))
+
+
     def handle_chat_message(self, parsed_datagram, client_address):
         """Handle chat messages and send acknowledgments."""
         if parsed_datagram["sequence"] == self.sequence_number:
@@ -91,6 +115,30 @@ class SIMPDaemon:
             data,daemon_address = self.daemon_socket.recvfrom(1024)
             parsed_datagram = parse_datagram(data)
             print(f"Received message from daemon at{daemon_address}: {parsed_datagram}")
+
+            # Forward the message to Client 2 if it is a chat initiation request
+            if parsed_datagram["operation"] == 0x01:  # Chat initiation request
+                target_client_ip = parsed_datagram["payload"]
+                print(f"Forwarding chat request to client 2 {target_client_ip}")
+
+                # Forward the request to Client 2
+                self.client_socket.sendto(parsed_datagram, (target_client_ip, self.client_port))
+
+                self.listen_to_client_response(target_client_ip)
+
+    def listen_to_client_response(self,target_client_ip):
+        #Listen for responses from Client2 and forward them to Daemon1.
+        while True:
+            data, client_address = self.client_socket.recvfrom(1024)
+            parsed_datagram = self.parse_datagram(data)
+            print(f"Received response from client 2: {parsed_datagram['payload']}")
+
+            # Forward the response back to Daemon 1 (via the daemon_socket)
+            daemon1_ip = "127.0.0.1"
+            daemon1_port = 7777  # Change this to the correct port where Daemon 1 listens
+            self.client_socket.sendto(parsed_datagram, (daemon1_ip, daemon1_port))
+
+
 
 
 # Datagram functions
@@ -121,8 +169,8 @@ def parse_datagram(data: bytes) -> dict:
     # Return the parsed datagram as a dictionary
     return {
         "type": datagram_type,
-        "operation": operation,
-        "sequence": sequence,
+        "operation": operation, 
+        "sequence": sequence, 
         "user": user,
         "payload_length": payload_length,
         "payload": payload

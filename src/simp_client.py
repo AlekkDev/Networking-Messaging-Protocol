@@ -65,58 +65,32 @@ class SIMPClient:
 
     def wait_for_connection(self):
         print("Waiting for incoming connections...")
+        
+        while self.connected:  # Keeps waiting until the connection is terminated
+            try:
+                # Wait for a message from Daemon 2 or another client
+                data, _ = self.socket.recvfrom(1024)  # Receives chat request
+                parsed_datagram = parse_datagram(data)
+                print(f"Received data: {parsed_datagram}")
 
-        # Listen for a chat initiation request
-        data, _ = self.socket.recvfrom(1024)
-        parsed_datagram = self.parse_datagram(data)
+                # Handle the chat request
+                if parsed_datagram["operation"] == 0x01:
+                    print(f"Received chat request from client at {parsed_datagram['payload']}.")
+                    accept_request = input(f"Do you want to accept the chat request from {parsed_datagram['payload']}? (yes/no): ").strip().lower()
 
-        if parsed_datagram["operation"] == 0x01:
-            print(f"Received chat request from client at {parsed_datagram['payload']}.")
-            accept_request = input(f"Do you want to accept the chat request from {parsed_datagram['payload']}? (yes/no): ").strip().lower()
+                    if accept_request == "yes":
+                        print("Chat request accepted.")
+                        # Send acceptance back to daemon (to forward to Daemon 1)
+                        accept_datagram = create_datagram(0x01, 0x02, 0, "client2")
+                        self.socket.sendto(accept_datagram, (self.daemon_ip, self.daemon_port))
 
-            if accept_request == "yes":
-                print("Chat request accepted.")
-                # Send acceptance back to daemon (to forward to Daemon 1)
-                accept_datagram = create_datagram(0x01, 0x02, 0, "client2")
-                self.socket.sendto(accept_datagram, (self.daemon_ip, self.daemon_port))
-
-                # Now proceed with chat after request is accepted
-                self.chat_with_client(parsed_datagram["payload"])
-            else:
-                print("Chat request declined.")
-                decline_datagram = self.create_datagram(0x01, 0x03, 0, "client2")
-                self.socket.sendto(decline_datagram, (self.daemon_ip, self.daemon_port))
-
-    def send_message(self):
-        """Prompt user to enter a message and send it to the daemon."""
-        message = input("Enter your message: ").strip()
-        if not message:
-            print("Message cannot be empty.")
-            return
-        chat_datagram = create_datagram(0x02, 0x01, 0, "client1", message)  # Chat message
-        self.socket.sendto(chat_datagram, (self.daemon_ip, self.daemon_port))
-        print("Message sent, waiting for acknowledgment...")
-
-    # Stop-and-wait retransmission Implementation
-
-        # Set socket timeout for retransmission
-        self.socket.settimeout(5.0)
-        try:
-            while True:
-                data, _ = self.socket.recvfrom(1024)
-                parsed = parse_datagram(data)
-
-                # Check for valid acknowledgment
-                if parsed["type"] == 0x01 and parsed["operation"] == 0x04:  # ACK
-                    if parsed["sequence"] == self.sequence_number:
-                        print("Acknowledgment received.")
-                        self.sequence_number ^= 1  # Toggle sequence number
-                        break
                     else:
-                        print("Invalid sequence number in ACK. Ignoring...")
-        except socket.timeout:
-            print("No acknowledgment received. Retransmitting...")
-            self.socket.sendto(chat_datagram, (self.daemon_ip, self.daemon_port))
+                        print("Chat request declined.")
+                        decline_datagram = create_datagram(0x01, 0x03, 0, "client2")
+                        self.socket.sendto(decline_datagram, (self.daemon_ip, self.daemon_port))
+
+            except socket.timeout:
+                print("Waiting for a message...")  # Timeout if no message is received within the time
 
     def terminate_session(self):
         """Send a termination request to the daemon."""
@@ -126,7 +100,7 @@ class SIMPClient:
         print("Session terminated.")
         self.connected = False
 
-# Datagram functions
+# Datagram functions 
 def create_datagram(datagram_type: int, operation: int, sequence: int, user: str, payload: str = "") -> bytes:
     """
     Creates a SIMP datagram with the specified fields.

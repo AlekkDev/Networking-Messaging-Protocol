@@ -89,9 +89,17 @@ class SIMPDaemon:
         print(f"Received chat request from client 1 {client_address} to client 2 {target_client_ip}")
 
         daemon2_ip = "127.0.0.2"
-        daemon2_port = "7777"
+        daemon2_port = 7777
 
-        self.client_socket.sendto(parsed_datagram, (daemon2_ip, daemon2_port))
+        forwarded_datagram = create_datagram(
+            parsed_datagram["type"],
+            parsed_datagram["operation"],
+            parsed_datagram["sequence"],
+            parsed_datagram["user"],
+            parsed_datagram["payload"]
+        )
+
+        self.daemon_socket.sendto(forwarded_datagram, (daemon2_ip, daemon2_port))
 
 
     def handle_chat_message(self, parsed_datagram, client_address):
@@ -122,21 +130,48 @@ class SIMPDaemon:
                 print(f"Forwarding chat request to client 2 {target_client_ip}")
 
                 # Forward the request to Client 2
-                self.client_socket.sendto(parsed_datagram, (target_client_ip, self.client_port))
 
+
+                forwarded_datagram = create_datagram(
+                    parsed_datagram["type"],
+                    parsed_datagram["operation"],
+                    parsed_datagram["sequence"],
+                    parsed_datagram["user"],
+                    parsed_datagram["payload"]
+                    )
+                
+                try:
+                    print(f"Sending message to {target_client_ip}:{self.client_port}")
+                    self.client_socket.sendto(forwarded_datagram, (target_client_ip, self.client_port))
+                    print("Message forwarded to Client 2.")
+                except Exception as e:
+                    print(f"Error sending message to Client 2: {e}")
+
+                print("Before the listen client")
                 self.listen_to_client_response(target_client_ip)
+                print("Tried to forward to client 2")
 
-    def listen_to_client_response(self,target_client_ip):
-        #Listen for responses from Client2 and forward them to Daemon1.
+    def listen_to_client_response(self, target_client_ip):
         while True:
             data, client_address = self.client_socket.recvfrom(1024)
-            parsed_datagram = self.parse_datagram(data)
+
+            print(f"Received data from {client_address}: {data}")
+
+            if client_address[0] != target_client_ip:
+                print(f"Skipping message from {client_address}, expected {target_client_ip}")
+                continue
+
+            parsed_datagram = parse_datagram(data)
             print(f"Received response from client 2: {parsed_datagram['payload']}")
 
-            # Forward the response back to Daemon 1 (via the daemon_socket)
             daemon1_ip = "127.0.0.1"
-            daemon1_port = 7777  # Change this to the correct port where Daemon 1 listens
-            self.client_socket.sendto(parsed_datagram, (daemon1_ip, daemon1_port))
+            daemon1_port = 7777
+            try:
+                self.client_socket.sendto(parsed_datagram, (daemon1_ip, daemon1_port))
+                print(f"Response forwarded to Daemon 1: {parsed_datagram}")
+            except Exception as e:
+                print(f"Error sending response to Daemon 1: {e}")
+
 
 
 

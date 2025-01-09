@@ -1,100 +1,150 @@
 import socket
-import argparse
 import threading
+import argparse
 
-class SIMPClient:
-    def __init__(self, client_ip: str, daemon_port: int):
-        self.client_ip = client_ip
-        self.daemon_ip = None
-        self.daemon_port = daemon_port
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.socket.bind((self.client_ip, 7778))  # Bind to the specific IP address
-        self.username = None
-        self.connected_to_daemon = False
-        self.connections = {}
+class SIMPDaemon:
+    def __init__(self, client_port: int, daemon_port: int, daemon_ip: str):
+        # Initialize the daemon with IP and ports for client and daemon communication
+        self.daemon_ip = daemon_ip
+        self.client_port = client_port  # Port for client communication
+        self.daemon_port = daemon_port  # Port for daemon communication
+        self.client_address = None
+        self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.daemon_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.client_socket.bind((self.daemon_ip, self.client_port))
+        self.daemon_socket.bind((self.daemon_ip, self.daemon_port))
+        self.connected_client_address = None
+        self.connected_client_username = None
+        self.connected_daemon = None
+        self.chat_requests = {}
+        print(f"Daemon listening on {self.daemon_ip}:{self.client_port} (client) and {self.daemon_ip}:{self.daemon_port} (daemon)...")
 
-        print(f"Client created, ready to connect to daemon at {self.daemon_ip}:{self.daemon_port}")
-
-    def show_menu(self):
-        """Display a menu for user actions."""
+    def start(self):
+        # Start listening threads for client and daemon
+        threading.Thread(target=self.listen_to_client, daemon=True).start()
+        threading.Thread(target=self.listen_to_daemons, daemon=True).start()
+        print("Daemon started, waiting for connections...")
         while True:
-            if not self.connected_to_daemon:
-                print("You are not connected to a daemon.")
-                print("\n=== SIMP Client Menu ===")
-                print("1. Connect to daemon")
-                print("2. Quit")
+            pass
 
-                choice = input("Enter your choice: ").strip()
-                if choice == "1":
-                    daemon_ip = input("Enter the IP of the Daemon you want to connect to: ").strip()
-                    self.connect_to_daemon(daemon_ip)
-                elif choice == "2":
-                    print("Exiting...")
-                    break
-                else:
-                    print("Invalid choice. Please try again.")
-            else:
-                print("\n=== SIMP Client Menu ===")
-                print("1. Initiate a chat")
-                print("2. Ping the daemon")
-                print("3. Listen for incoming messages")
-                print("4. Quit")
-                choice = input("Enter your choice: ").strip()
+    def listen_to_client(self):
+        # Listen for incoming datagrams from clients
+        while True:
+            data, client_address = self.client_socket.recvfrom(1024)
+            parsed_datagram = parse_datagram(data)
+            if parsed_datagram["type"] == 0x01:  # Control datagrams
+                if parsed_datagram["operation"] == 0x02:  # Connect request (SYN)
+                    self.handle_client_connection(parsed_datagram, client_address)
+                elif parsed_datagram["operation"] == 0x03:  # Chat initiation
+                    self.handle_chat_initiation(parsed_datagram, client_address)
+                elif parsed_datagram["operation"] == 0x04:  # Acknowledgment (ACK)
+                    print(f"Received ACK from {client_address}")
+                elif parsed_datagram["operation"] == 0x05:  # Ping
+                    self.handle_ping_request(client_address)
+                elif parsed_datagram["operation"] == 0x07:  # Check for chat requests
+                    self.handle_check_chat_requests(parsed_datagram, client_address)
 
-                if choice == "1":
-                    print("Chat feature not implemented yet.")
-                elif choice == "2":
-                    self.ping_daemon()
-                elif choice == "3":
-                    self.listen_for_messages()
-                elif choice == "4":
-                    print("Exiting...")
-                    break
-                else:
-                    print("Invalid choice. Please try again.")
+    def listen_to_daemons(self):
+        # Listen for incoming datagrams from other daemons
+        while True:
+            data, daemon_address = self.daemon_socket.recvfrom(1024)
+            parsed_datagram = parse_datagram(data)
+            if parsed_datagram["type"] == 0x01:  # Control datagrams
+                if parsed_datagram["operation"] == 0x02:  # Receive SYN
+                    print(f"Received SYN from daemon {daemon_address}")
+                    self.handle_daemon_connect_request(parsed_datagram, daemon_address)
+                    self.chat_requests[parsed_datagram["user"]] = daemon_address
+                elif parsed_datagram["operation"] == 0x06:  # Receive SYN-ACK
+                    print(f"Received SYN-ACK from daemon {daemon_address}")
+                    self.connected_daemon = daemon_address
+                    print(f"Connected to daemon {daemon_address}")
+                    # Expect SYN-ACK from other daemon
+                    if parsed_datagram["type"] == 0x01 and parsed_datagram["operation"] == 0x06:
+                        ack_datagram = create_datagram(0x01, 0x04, 0, parsed_datagram["user"], self.connected_client_username)
+                        self.client_socket.sendto(ack_datagram, self.connected_client_address)
+                        print(f"Sent ACK to client {self.connected_client_address}")
 
-    def connect_to_daemon(self, daemon_ip: str):
-        """Send a connect request to the daemon."""
-        if self.username is None:
-            self.username = input("Enter your username: ").strip()
-        print("Starting handshake...")
-        syn_datagram = create_datagram(0x01, 0x02, 0, self.username)  # SYN
-        self.socket.sendto(syn_datagram, (daemon_ip, self.daemon_port))
-        print("Sent SYN to daemon")
-        data, _ = self.socket.recvfrom(1024)
-        parsed = parse_datagram(data)
-        if parsed["type"] == 0x01 and parsed["operation"] == 0x06:  # SYN-ACK
-            print("Received SYN-ACK from daemon")
-            ack_datagram = create_datagram(0x01, 0x04, 0, "client1")  # ACK
-            self.socket.sendto(ack_datagram, (daemon_ip, self.daemon_port))
-            print("Sent ACK to daemon, handshake complete.")
-            self.connected_to_daemon = True
-            self.daemon_ip = daemon_ip
+    def handle_client_connection(self, parsed_datagram, client_address):
+        # Handle client connection requests (SYN)
+        if self.connected_client_address is None:
+            syn_ack_datagram = create_datagram(0x01, 0x06, 0, "daemon")  # SYN-ACK
+            self.client_socket.sendto(syn_ack_datagram, client_address)
+            print(f"Sent SYN-ACK to client {client_address}")
+            data, _ = self.client_socket.recvfrom(1024)
+            parsed = parse_datagram(data)
+            if parsed["type"] == 0x01 and parsed["operation"] == 0x04:  # ACK
+                self.connected_client_username = parsed_datagram["user"]
+                self.connected_client_address = client_address
+            print(f"Connected to client:{self.connected_client_username} {client_address}")
         else:
-            print("Failed to establish connection.")
+            fin_datagram = create_datagram(0x01, 0x04, 0, "client", "Connection rejected")  # FIN
+            self.client_socket.sendto(fin_datagram, client_address)
+            print(f"Rejected connection from {client_address} (FIN)")
 
-    def listen_for_messages(self):
-        """Listen for incoming messages from the daemon."""
-        print("Listening for incoming messages...")
-        data, _ = self.socket.recvfrom(1024)
-        parsed_datagram = parse_datagram(data)
-        print(f"Received data: {parsed_datagram}")
-        if parsed_datagram["type"] == 0x01 and parsed_datagram["operation"] == 0x02:
-            print(f"Received SYN from daemon: {parsed_datagram}")
-        elif parsed_datagram["type"] == 0x01 and parsed_datagram["operation"] == 0x04:
-            print("Connection rejected by daemon (FIN)")
+    def handle_daemon_connect_request(self, parsed_datagram, daemon_address):
+        # Handle connection requests from other daemons (SYN)
+        if self.connected_daemon is None and len(self.chat_requests) == 0:
+            self.connected_daemon = daemon_address
+            self.chat_requests[parsed_datagram["user"]] = daemon_address
+            data, _ = self.client_socket.recvfrom(1024)
+            parsed = parse_datagram(data)
+            if parsed["type"] == 0x01 and parsed["operation"] == 0x04:  # ACK
+                syn_ack_datagram = create_datagram(0x01, 0x06, 0, "daemon")  # SYN-ACK
+                self.daemon_socket.sendto(syn_ack_datagram, daemon_address)
+                print(f"Sent SYN-ACK to daemon {daemon_address}")
+                print(f"Connected to daemon {daemon_address}")
+                self.connected_daemon = daemon_address
+        else:
+            fin_datagram = create_datagram(0x01, 0x04, 0, "daemon", "Connection rejected")  # FIN
+            self.daemon_socket.sendto(fin_datagram, daemon_address)
+            print(f"Rejected connection from {daemon_address} (FIN)")
 
-    def ping_daemon(self):
-        """Send a ping request to the daemon."""
-        ping_request = create_datagram(0x01, 0x05, 0, str(self.username), "ping")
-        self.socket.sendto(ping_request, (self.daemon_ip, self.daemon_port))
-        print("Ping request sent to daemon")
-        data, _ = self.socket.recvfrom(1024)
-        parsed_datagram = parse_datagram(data)
-        print(f"Received data: {parsed_datagram['payload']}")
+    def handle_check_chat_requests(self, parsed_datagram, client_address):
+        # Handle client requests to check for chat requests
+        print(f"Received wait request from {client_address}")
+        if self.chat_requests:
+            for user, address in self.chat_requests.items():
+                ack_datagram = create_datagram(0x01, 0x04, 0, "daemon", user)  # ACK
+                self.client_socket.sendto(ack_datagram, client_address)
+                print(f"Sent chat request to {client_address}")
+                data, _ = self.client_socket.recvfrom(1024)
+                parsed = parse_datagram(data)
+                if parsed["type"] == 0x01 and parsed["operation"] == 0x04:  # ACK
+                    print(f"Chat request accepted by {client_address}")
+                    self.chat_requests.pop(user)
+                elif parsed["type"] == 0x01 and parsed["operation"] == 0x08:  # FIN
+                    print(f"Chat request rejected by {client_address}")
+                    self.chat_requests.pop(user)
+        else:
+            fin_datagram = create_datagram(0x01, 0x08, 0, "daemon", "No chat requests available")  # FIN
+            self.client_socket.sendto(fin_datagram, client_address)
+            print(f"Sent FIN datagram to Client at {client_address}")
+
+    def handle_chat_initiation(self, parsed_datagram, client_address):
+        # Handle chat initiation requests from clients
+        print(f"Received chat initiation from client {client_address}")
+        receiver_ip = parsed_datagram["payload"]
+        self.chat_requests[parsed_datagram["user"]] = client_address
+        syn_datagram = create_datagram(0x01, 0x02, 0, self.connected_client_username)  # SYN
+        self.daemon_socket.sendto(syn_datagram, (receiver_ip, self.daemon_port))
+        print(f"Sent chat initiation to daemon at {receiver_ip}")
+
+    def handle_ping_request(self, client_address):
+        # Handle ping requests from clients
+        ping_response = create_datagram(0x01, 0x05, 0, "daemon", "pong")  # PING response
+        self.client_socket.sendto(ping_response, client_address)
+        print(f"Ping response sent to {client_address}")
+
+    def forward_to_client(self, parsed_datagram, daemon_address):
+        # Forward datagrams from daemons to clients
+        client_datagram = create_datagram(parsed_datagram["type"], parsed_datagram["operation"], parsed_datagram["sequence"],
+                            parsed_datagram["user"], parsed_datagram["payload"])
+        self.client_socket.sendto(client_datagram, (self.ip, self.client_port))
+        print(f"Forwarded operation {parsed_datagram['operation']} to client at {self.ip, self.client_port}")
 
 # Datagram functions
 def create_datagram(datagram_type: int, operation: int, sequence: int, user: str, payload: str = "") -> bytes:
+    # Create a datagram with the specified type, operation, sequence, user, and payload
     user_field = user.ljust(32)[:32].encode('ascii')
     payload_length = len(payload)
     header = (
@@ -107,6 +157,7 @@ def create_datagram(datagram_type: int, operation: int, sequence: int, user: str
     return header + payload.encode('ascii')
 
 def parse_datagram(data: bytes) -> dict:
+    # Parse a datagram into its components
     datagram_type = data[0]
     operation = data[1]
     sequence = data[2]
@@ -123,9 +174,9 @@ def parse_datagram(data: bytes) -> dict:
     }
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="SIMP Client")
-    parser.add_argument("client_ip", type=str, help="Client IP address")
+    parser = argparse.ArgumentParser(description="SIMP Daemon")
+    parser.add_argument("daemon_ip", type=str, help="Daemon IP address")
     args = parser.parse_args()
 
-    client = SIMPClient(args.client_ip,7778)
-    client.show_menu()
+    daemon = SIMPDaemon(client_port=7778, daemon_port=7777, daemon_ip=args.daemon_ip)
+    daemon.start()

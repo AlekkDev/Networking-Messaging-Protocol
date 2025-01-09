@@ -52,19 +52,22 @@ class SIMPDaemon:
                     self.chat_requests[parsed_datagram["user"]] = daemon_address
                 elif parsed_datagram["operation"] == 0x06:  # Receive SYN-ACK
                     print(f"Received SYN-ACK from daemon {daemon_address}")
+                    # send ACK to daemon
+                    ack_datagram = create_datagram(0x01, 0x04, 0x00, self.connected_client_username,"payload" )
+                    self.daemon_socket.sendto(ack_datagram, daemon_address)
+                    print(f"Sent ACK to daemon {daemon_address}")
+
                     self.connected_daemon = daemon_address
                     print(f"Connected to daemon {daemon_address}")
                     # Expect SYN-ACK from other daemon
                     if parsed_datagram["type"] == 0x01 and parsed_datagram["operation"] == 0x06:
-                        ack_datagram = create_datagram(0x01, 0x04, 0, parsed_datagram["user"], self.connected_client_username)
+                        ack_datagram = create_datagram(0x01, 0x04, 0x00, parsed_datagram["user"], self.connected_client_username)
                         self.client_socket.sendto(ack_datagram, self.connected_client_address)
                         print(f"Sent ACK to client {self.connected_client_address}")
 
-
-
     def handle_client_connection(self, parsed_datagram, client_address):
         if self.connected_client_address is None:
-            syn_ack_datagram = create_datagram(0x01, 0x06, 0, "daemon")
+            syn_ack_datagram = create_datagram(0x01, 0x06, 0x00, "daemon")
             self.client_socket.sendto(syn_ack_datagram, client_address)
             print(f"Sent SYN-ACK to client {client_address}")
             data, _ = self.client_socket.recvfrom(1024)
@@ -74,7 +77,7 @@ class SIMPDaemon:
                 self.connected_client_address = client_address
             print(f"Connected to client:{self.connected_client_username} {client_address}")
         else:
-            fin_datagram = create_datagram(0x01, 0x04, 0, "client", "Connection rejected")
+            fin_datagram = create_datagram(0x01, 0x04, 0x00, "client", "Connection rejected")
             self.client_socket.sendto(fin_datagram, client_address)
             print(f"Rejected connection from {client_address} (FIN)")
 
@@ -85,14 +88,21 @@ class SIMPDaemon:
             data, _ = self.client_socket.recvfrom(1024)
             parsed = parse_datagram(data)
             if parsed["type"] == 0x01 and parsed["operation"] == 0x04:
-                syn_ack_datagram = create_datagram(0x01, 0x06, 0, "daemon")
+                syn_ack_datagram = create_datagram(0x01, 0x06, 0x00, "daemon")
                 self.daemon_socket.sendto(syn_ack_datagram, daemon_address)
                 print(f"Sent SYN-ACK to daemon {daemon_address}")
-                print(f"Connected to daemon {daemon_address}")
-                self.connected_daemon = daemon_address
-                # notify client that connection is established with ack
+
+                # Expect ACK from other daemon
+                data, _ = self.daemon_socket.recvfrom(1024)
+                parsed = parse_datagram(data)
+
+                if parsed["type"] == 0x01 and parsed["operation"] == 0x04:
+                    print(f"Received final ACK from daemon {daemon_address}")
+                    print(f"Connected to daemon {daemon_address}")
+                    self.connected_daemon = daemon_address
+                    # notify client that connection is established with ack
         else:
-            fin_datagram = create_datagram(0x01, 0x04, 0, "daemon", "Connection rejected")
+            fin_datagram = create_datagram(0x01, 0x04, 0x00, "daemon", "Connection rejected")
             self.daemon_socket.sendto(fin_datagram, daemon_address)
             print(f"Rejected connection from {daemon_address} (FIN)")
 
@@ -100,7 +110,7 @@ class SIMPDaemon:
         print(f"Received wait request from {client_address}")
         if self.chat_requests:
             for user, address in self.chat_requests.items():
-                ack_datagram = create_datagram(0x01, 0x04, 0, "daemon", user)
+                ack_datagram = create_datagram(0x01, 0x04, 0x00, "daemon", user)
                 self.client_socket.sendto(ack_datagram, client_address)
                 print(f"Sent chat request to {client_address}")
                 data, _ = self.client_socket.recvfrom(1024)
@@ -112,7 +122,7 @@ class SIMPDaemon:
                     print(f"Chat request rejected by {client_address}")
                     self.chat_requests.pop(user)
         else:
-            fin_datagram = create_datagram(0x01, 0x08, 0, "daemon", "No chat requests available")
+            fin_datagram = create_datagram(0x01, 0x08, 0x00, "daemon", "No chat requests available")
             self.client_socket.sendto(fin_datagram, client_address)
             print(f"Sent FIN datagram to Client at {client_address}")
 
@@ -121,14 +131,12 @@ class SIMPDaemon:
         print(f"Received chat initiation from client {client_address}")
         receiver_ip = parsed_datagram["payload"]
         self.chat_requests[parsed_datagram["user"]] = client_address
-        syn_datagram = create_datagram(0x01, 0x02, 0, self.connected_client_username)
+        syn_datagram = create_datagram(0x01, 0x02, 0x00, self.connected_client_username)
         self.daemon_socket.sendto(syn_datagram, (receiver_ip, self.daemon_port))
         print(f"Sent chat initiation to daemon at {receiver_ip}")
 
-
-
     def handle_ping_request(self, client_address):
-        ping_response = create_datagram(0x01, 0x05, 0, "daemon", "pong")
+        ping_response = create_datagram(0x01, 0x05, 0x00, "daemon", "pong")
         self.client_socket.sendto(ping_response, client_address)
         print(f"Ping response sent to {client_address}")
 

@@ -13,13 +13,13 @@ class SIMPClient:
         self.connected_to_daemon = False
         self.connections = {}
         self.chat_started = False
+        self.chat_listen = False
         self.count = 0
 
         print(f"Client created, ready to connect to daemon at {self.daemon_ip}:{self.daemon_port}")
 
     # used to show menu for user actions
     def show_menu(self):
-        """Display a menu for user actions."""
         while True:
             if not self.connected_to_daemon:
                 print("You are not connected to a daemon.")
@@ -36,6 +36,8 @@ class SIMPClient:
                     break
                 else:
                     print("Invalid choice. Please try again.")
+            if self.chat_listen:
+                self.listening_mode()
             if self.chat_started:
                 self.chatting_mode()
                 #chatting_mode
@@ -67,33 +69,36 @@ class SIMPClient:
         if self.username is None:
             self.username = input("Enter your username: ").strip()
         print("Starting handshake...")
+        try:
+            # Send SYN to daemon
+            syn_datagram = create_datagram(0x01, 0x02, 0x00, self.username)  # SYN
+            self.socket.sendto(syn_datagram, (daemon_ip, self.daemon_port))
+            print("Sent SYN to daemon")
+            data, _ = self.socket.recvfrom(1024)
+            parsed = parse_datagram(data)
 
-        # Send SYN to daemon
-        syn_datagram = create_datagram(0x01, 0x02, 0x00, self.username)  # SYN
-        self.socket.sendto(syn_datagram, (daemon_ip, self.daemon_port))
-        print("Sent SYN to daemon")
-        data, _ = self.socket.recvfrom(1024)
-        parsed = parse_datagram(data)
-
-        # Check if SYN-ACK received
-        if parsed["type"] == 0x01 and parsed["operation"] == 0x06:  # SYN-ACK
-            print("Received SYN-ACK from daemon")
-            ack_datagram = create_datagram(0x01, 0x04, 0x00, self.username)  # ACK
-            self.socket.sendto(ack_datagram, (daemon_ip, self.daemon_port))
-            print("Sent ACK to daemon, handshake complete.")
-            self.connected_to_daemon = True
-            self.daemon_ip = daemon_ip
-        else:
-            print("Failed to establish connection.")
+            # Check if SYN-ACK received
+            if parsed["type"] == 0x01 and parsed["operation"] == 0x06:  # SYN-ACK
+                print("Received SYN-ACK from daemon")
+                ack_datagram = create_datagram(0x01, 0x04, 0x00, self.username)  # ACK
+                self.socket.sendto(ack_datagram, (daemon_ip, self.daemon_port))
+                print("Sent ACK to daemon, handshake complete.")
+                self.connected_to_daemon = True
+                self.daemon_ip = daemon_ip
+            else:
+                print("Failed to establish connection.")
+        except Exception as e:
+            print(f"Error connecting to daemon: {e}")
 
     # used to initiate chat request through the daemon
     def initiate_chat_request(self, receiver_ip: str):
-        """Initiate a chat request to the daemon."""
+
         chat_request_datagram = create_datagram(0x01, 0x03, 0x00, self.username, receiver_ip)
         self.socket.sendto(chat_request_datagram, (self.daemon_ip, self.daemon_port))
         print(f"Sent chat request to {receiver_ip}:{self.daemon_port}")
         data, _ = self.socket.recvfrom(1024)
         parsed_datagram = parse_datagram(data)
+
         # Check if chat request accepted (ACK expected)
         if parsed_datagram["type"] == 0x01 and parsed_datagram["operation"] == 0x04:
             print(f"Received ACK from {parsed_datagram['user']}")
@@ -119,19 +124,23 @@ class SIMPClient:
             print("1. Accept")
             print("2. Reject")
             choice = input("Enter your choice: ").strip()
+
+            # if chat is acceptedl, send ACK to daemon
             if choice == "1":
                 print("Chat accepted.")
                 ack_datagram = create_datagram(0x01, 0x04, 0x00, self.username)
                 self.socket.sendto(ack_datagram, (self.daemon_ip, self.daemon_port))
                 print("Sent ACK to daemon")
-                # wait syn-ack from daemon
+
+
+                # wait syn-ack from daemon (purposely not a 3-way handshake)
                 data, _ = self.socket.recvfrom(1024)
                 parsed = parse_datagram(data)
                 if parsed["type"] == 0x01 and parsed["operation"] == 0x04:
                     print(f"Received ACK from {parsed['user']}")
                     print("Connection established.")
                     self.connections[parsed["user"]] = parsed["payload"]
-                    
+                    # turn the client that accepts chat request into listener
                     self.listening_mode()
 
             elif choice == "2":
@@ -142,15 +151,19 @@ class SIMPClient:
                 print("Invalid choice. Please try again.")
 
 
-
+    # Enable the client to send messages to another client
     def chatting_mode(self):
-        """Enable the client to send messages to another client."""
         print("\n=== Chatting Mode ===")
-        print("Type your messages below. Type 'exit' to leave the chat.")
+        print("Type your messages below. Type 'exit' to leave the chat. Type 'listen' to listen for incoming messages.")
         while self.chat_started:
             message = input("> ").strip()
             if message.lower() == 'exit':
                 self.end_chat()
+                self.chat_started = False
+            elif message.lower() == 'listen':
+                # Send a message to the daemon to notify the other user that you are listening
+                listen_datagram = create_datagram(0x01, 0x02, 0x00, self.username, "Listening for messages")
+                self.chat_listen = True
                 break
             else:
                 self.send_message(message)
@@ -189,7 +202,7 @@ class SIMPClient:
         self.socket.sendto(fin_datagram, (self.daemon_ip, self.daemon_port))
         print("Chat ended.")
 
-
+    # Testing function that pings the connected daemon
     def ping_daemon(self):
         """Send a ping request to the daemon."""
         ping_request = create_datagram(0x01, 0x05, 0x00, str(self.username), "ping")
@@ -198,7 +211,6 @@ class SIMPClient:
         data, _ = self.socket.recvfrom(1024)
         parsed_datagram = parse_datagram(data)
         print(f"Received data: {parsed_datagram['payload']}")
-
 # Datagram functions
 def create_datagram(datagram_type: int, operation: int, sequence: int, user: str, payload: str = "") -> bytes:
     user_field = user.ljust(32)[:32].encode('ascii')

@@ -65,6 +65,7 @@ class SIMPDaemon:
                         self.client_socket.sendto(ack_datagram, self.connected_client_address)
                         print(f"Sent ACK to client {self.connected_client_address}")
 
+    #
     def handle_client_connection(self, parsed_datagram, client_address):
         if self.connected_client_address is None:
             syn_ack_datagram = create_datagram(0x01, 0x06, 0x00, "daemon")

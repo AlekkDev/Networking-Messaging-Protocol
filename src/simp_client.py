@@ -12,6 +12,7 @@ class SIMPClient:
         self.username = None
         self.connected_to_daemon = False
         self.connections = {}
+        self.chat_started = False
 
         print(f"Client created, ready to connect to daemon at {self.daemon_ip}:{self.daemon_port}")
 
@@ -34,7 +35,7 @@ class SIMPClient:
                     break
                 else:
                     print("Invalid choice. Please try again.")
-            if self.connections:
+            if self.chat_started:
                 print("\n=== SIMP Client Chat Menu ===")
                 ##############################
             else:
@@ -96,6 +97,7 @@ class SIMPClient:
         if parsed_datagram["type"] == 0x01 and parsed_datagram["operation"] == 0x04:
             print(f"Received ACK from {parsed_datagram['user']}")
             print("Chat request accepted.")
+            self.chat_started = True
             self.connections[receiver_ip] = parsed_datagram["user"]
 
         else:

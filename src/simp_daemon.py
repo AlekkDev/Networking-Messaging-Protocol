@@ -41,11 +41,25 @@ class SIMPDaemon:
                 elif parsed_datagram["operation"] == 0x07:  # Check for chat requests
                     self.handle_check_chat_requests(parsed_datagram, client_address)
 
+            elif parsed_datagram["type"] == 0x02:
+                receiver_ip = parsed_datagram["payload"].split(":")[0]
+                message_datagram = create_datagram(0x02, 0x00, 0x00, parsed_datagram["user"], parsed_datagram["payload"])
+                self.daemon_socket.sendto(message_datagram, (receiver_ip, self.daemon_port))
+                print(f"Forwarded message datagram to daemon at {receiver_ip}:{self.daemon_port}")
+
     def listen_to_daemons(self):
         while True:
             data, daemon_address = self.daemon_socket.recvfrom(1024)
             parsed_datagram = parse_datagram(data)
-            if parsed_datagram["type"] == 0x01:  # Control datagrams
+
+
+            if parsed_datagram["type"] == 0x02:  # Message datagram from another daemon
+                print(f"Received message datagram from daemon {daemon_address}")
+                if self.connected_client_address:
+                    self.client_socket.sendto(data, self.connected_client_address)
+                    print(f"Forwarded message datagram to client at {self.connected_client_address}")
+
+            elif parsed_datagram["type"] == 0x01:  # Control datagrams
                 if parsed_datagram["operation"] == 0x02:  # Receive SYN
                     print(f"Received SYN from daemon {daemon_address}")
                     self.handle_daemon_connect_request(parsed_datagram, daemon_address)

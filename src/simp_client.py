@@ -13,6 +13,7 @@ class SIMPClient:
         self.connected_to_daemon = False
         self.connections = {}
         self.chat_started = False
+        self.count = 0
 
         print(f"Client created, ready to connect to daemon at {self.daemon_ip}:{self.daemon_port}")
 
@@ -36,8 +37,8 @@ class SIMPClient:
                 else:
                     print("Invalid choice. Please try again.")
             if self.chat_started:
-                print("\n=== SIMP Client Chat Menu ===")
-                ##############################
+                self.chatting_mode()
+                #chatting_mode
             else:
                 print("\n=== SIMP Client Menu ===")
                 print("1. Initiate a chat")
@@ -127,10 +128,11 @@ class SIMPClient:
                 data, _ = self.socket.recvfrom(1024)
                 parsed = parse_datagram(data)
                 if parsed["type"] == 0x01 and parsed["operation"] == 0x04:
-                    print(f"Received cACK from {parsed['user']}")
+                    print(f"Received ACK from {parsed['user']}")
                     print("Connection established.")
                     self.connections[parsed["user"]] = parsed["payload"]
-                    #self.chat_started = True
+                    
+                    self.listening_mode()
 
             elif choice == "2":
                 print("Chat rejected.")
@@ -138,6 +140,54 @@ class SIMPClient:
                 self.socket.sendto(fin_datagram, (self.daemon_ip, self.daemon_port))
             else:
                 print("Invalid choice. Please try again.")
+
+
+
+    def chatting_mode(self):
+        """Enable the client to send messages to another client."""
+        print("\n=== Chatting Mode ===")
+        print("Type your messages below. Type 'exit' to leave the chat.")
+        while self.chat_started:
+            message = input("> ").strip()
+            if message.lower() == 'exit':
+                self.end_chat()
+                break
+            else:
+                self.send_message(message)
+
+    def listening_mode(self):
+        """Listen for incoming messages from the daemon."""
+        print("=== Listening for Messages ===")
+        self.stop_listening = False
+        while not self.stop_listening:
+            try:
+                data, _ = self.socket.recvfrom(1024)
+                parsed_datagram = parse_datagram(data)
+                if parsed_datagram["type"] == 0x02:  # Chat message
+                    print(f"\nMessage from {parsed_datagram['user']}: {parsed_datagram['payload']}")
+                    print("> ", end='', flush=True)
+                elif parsed_datagram["operation"] == 0x08:  # Chat end notification
+                    print("\nChat ended by the other user.")
+                    self.chat_started = False
+                    break
+            except socket.timeout:
+                continue
+
+    def send_message(self, message: str):
+        """Send a message to the daemon for forwarding."""
+        if not self.chat_started:
+            print("You are not in a chat.")
+            return
+        datagram = create_datagram(0x02, 0x00, 0x00, self.username, message)
+        self.socket.sendto(datagram, (self.daemon_ip, self.daemon_port))
+        print("Message sent.")
+
+    def end_chat(self):
+        """End the current chat session."""
+        self.chat_started = False
+        fin_datagram = create_datagram(0x01, 0x08, 0x00, self.username, "Chat ended")
+        self.socket.sendto(fin_datagram, (self.daemon_ip, self.daemon_port))
+        print("Chat ended.")
 
 
     def ping_daemon(self):

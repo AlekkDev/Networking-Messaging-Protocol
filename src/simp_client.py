@@ -126,10 +126,11 @@ class SIMPClient:
                 # wait syn-ack from daemon
                 data, _ = self.socket.recvfrom(1024)
                 parsed = parse_datagram(data)
-                if parsed["type"] == 0x01 and parsed["operation"] == 0x06:
-                    print(f"Received SYN-ACK from {parsed['user']}")
+                if parsed["type"] == 0x01 and parsed["operation"] == 0x04:
+                    print(f"Received cACK from {parsed['user']}")
                     print("Connection established.")
                     self.connections[parsed["user"]] = parsed["payload"]
+                    #self.chat_started = True
 
             elif choice == "2":
                 print("Chat rejected.")

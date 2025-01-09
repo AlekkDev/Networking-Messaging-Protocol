@@ -99,9 +99,13 @@ class SIMPDaemon:
 
                 if parsed["type"] == 0x01 and parsed["operation"] == 0x04:
                     print(f"Received final ACK from daemon {daemon_address}")
-                    print(f"Connected to daemon {daemon_address}")
                     self.connected_daemon = daemon_address
+
                     # notify client that connection is established with ack
+                    ack_datagram = create_datagram(0x01, 0x04, 0x00, self.connected_client_username, "payload")
+                    self.client_socket.sendto(ack_datagram, self.connected_client_address)
+                    print(f"Sent ACK to client {self.connected_client_address}")
+                    print(f"Connected to daemon {daemon_address}")
         else:
             fin_datagram = create_datagram(0x01, 0x04, 0x00, "daemon", "Connection rejected")
             self.daemon_socket.sendto(fin_datagram, daemon_address)
